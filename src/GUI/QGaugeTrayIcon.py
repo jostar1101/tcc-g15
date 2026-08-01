@@ -20,8 +20,10 @@ class QGaugeTrayIcon(QtGui.QPixmap):
         font = QtGui.QFont("Consolas", self._SIZE[1] // 2)
         painter.setFont(font)
 
-        def drawVal(y: int, val: int, limits: Optional[Tuple[int,int]]):
+        def drawVal(y: int, val: Optional[int], limits: Optional[Tuple[int,int]]):
             color = Colors.GREEN
+            if val is None:
+                val = 0
             if limits:
                 if val >= limits[1]: color = Colors.RED
                 elif val >= limits[0]: color = Colors.YELLOW
