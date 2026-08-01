@@ -113,14 +113,14 @@ class FanCurveWidget(QtWidgets.QWidget):
             path = QtGui.QPainterPath(pts[0])
             for pt in pts[1:]:
                 path.lineTo(pt)
-            p.setPen(QtGui.QPen(QtGui.QColor(Colors.GREEN.value), 2))
+            p.setPen(QtGui.QPen(QtGui.QColor(Colors.GREEN.value), 3))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawPath(path)
 
         # Control points
         for i, (x, y) in enumerate(self._curve):
             pt = self._toWidget(x, y)
-            rPt = 5 if i == self._hoverIdx or i == self._dragIdx else 3
+            rPt = 6 if i == self._hoverIdx or i == self._dragIdx else 4
             p.setBrush(QtGui.QColor(Colors.BLUE.value))
             p.setPen(QtGui.QPen(QtGui.QColor(Colors.WHITE.value), 1))
             p.drawEllipse(pt, rPt, rPt)
