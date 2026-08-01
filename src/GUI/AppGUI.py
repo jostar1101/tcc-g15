@@ -119,7 +119,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.9"
+    APP_VERSION = "1.6.10"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -298,9 +298,19 @@ class TCC_GUI(QtWidgets.QWidget):
         self._fanCurveAutoCB.setToolTip("In Custom mode, control fan speed automatically by the temperature curves")
         def onFanCurveAutoToggle():
             self._fanCurveAuto = self._fanCurveAutoCB.isChecked()
-            if self._fanCurveAuto and self._modeSwitch.getChecked() != ThermalMode.Custom.value:
-                self._modeSwitch.setChecked(ThermalMode.Custom.value)
+            isCustom = self._modeSwitch.getChecked() == ThermalMode.Custom.value
+            if self._fanCurveAuto and not isCustom:
+                self._fanCurveAutoCB.setChecked(False)
+                self._fanCurveAuto = False
                 self._toasterMessageCurrentMode()
+                self.toasterMessage(
+                    [
+                        "Auto fan curve",
+                        "Fan curves only apply in Custom mode",
+                        "Switch to Custom mode first"
+                    ]
+                )
+                return
             self._thermalGPU.setSpeedDisabled(self._fanCurveAuto)
             self._thermalCPU.setSpeedDisabled(self._fanCurveAuto)
             if self._fanCurveAuto:
