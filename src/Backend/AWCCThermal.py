@@ -52,7 +52,10 @@ class AWCCThermal:
     def getFanRelatedTemp(self, fanIdx: int) -> Optional[int]:
         if fanIdx >= len(self._fanIdsAndRelatedSensorsIds):
             return None
-        return self._awcc.GetSensorTemperature(self._fanIdsAndRelatedSensorsIds[fanIdx][1][0])
+        sensors = self._fanIdsAndRelatedSensorsIds[fanIdx][1]
+        if not sensors:
+            return None
+        return self._awcc.GetSensorTemperature(sensors[0])
 
     def getGPUTemp(self) -> Optional[int]:
         # GPU core temperature via NVML (same source as Task Manager).
