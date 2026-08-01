@@ -1,4 +1,4 @@
-import sys, os, time, datetime, json
+import sys, os, time, datetime, json, tempfile
 from enum import Enum
 from typing import Callable, Literal, Optional, Tuple, List
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -20,25 +20,47 @@ def resourcePath(relativePath: str = '.'):
 def autorunTask(action: Literal['add', 'remove']) -> int:
     taskXmlFilePath = resourcePath("tcc_g15_task.xml")
 
-    addCmd = f'schtasks /create /xml "{taskXmlFilePath}" /tn "TCC_G15"'
-    removeCmd = 'schtasks /delete /tn "TCC_G15" /f'
-
     if action == 'add':
-        # Patch program path in the xml file
+        # Patch program path in the xml file.
+        # Work on a temp copy: the bundled copy may live in Program Files
+        # (not writable) when running the installed version.
         exeFile = os.path.abspath(sys.argv[0])
-        if exeFile.endswith('.exe'):
-            with open(taskXmlFilePath, 'r') as f:
-                xml = f.read()
-            xml = xml.replace('<!--EXE_FILE_PATH-->', exeFile)
-            with open(taskXmlFilePath, 'w') as f:
-                f.write(xml)
-        else:
+        if not exeFile.endswith('.exe'):
             return -100
-        
-        os.system(removeCmd)
-        return os.system(addCmd)
+        try:
+            with open(taskXmlFilePath, 'r', encoding='utf-8-sig') as f:
+                xml = f.read()
+        except Exception as ex:
+            print(f'autorunTask: read failed: {ex}')
+            return -100
+        xml = xml.replace('<!--EXE_FILE_PATH-->', exeFile.replace('&', '&amp;').replace('"', '&quot;'))
+        taskXmlFilePath = os.path.join(tempfile.gettempdir(), 'tcc_g15_task.xml')
+        try:
+            with open(taskXmlFilePath, 'w', encoding='utf-8') as f:
+                f.write(xml)
+        except Exception as ex:
+            print(f'autorunTask: write failed: {ex}')
+            return -100
+
+    # Use subprocess with argument lists: no shell involved, no injection surface
+    import subprocess
+    if action == 'add':
+        cmds = [
+            ['schtasks', '/delete', '/tn', 'TCC_G15', '/f'],
+            ['schtasks', '/create', '/xml', taskXmlFilePath, '/tn', 'TCC_G15'],
+        ]
     else:
-        return os.system(removeCmd)
+        cmds = [['schtasks', '/delete', '/tn', 'TCC_G15', '/f']]
+    err = 0
+    for cmd in cmds:
+        try:
+            r = subprocess.run(cmd, capture_output=True)
+            if r.returncode != 0 and '/create' in cmd:
+                err = r.returncode
+        except Exception as ex:
+            print(f'autorunTask: {ex}')
+            err = -1
+    return err
 
 def alert(title: str, message: str, type: QtWidgets.QMessageBox.Icon = QtWidgets.QMessageBox.Icon.Information, *, message2: Optional[str] = None) -> None:
     msg = QtWidgets.QMessageBox(type, title, message)
@@ -121,7 +143,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.12"
+    APP_VERSION = "1.6.13"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -358,6 +380,7 @@ class TCC_GUI(QtWidgets.QWidget):
         self._updateGaugesTask = None
         self._lastGPUTemp: Optional[int] = None
         self._lastCPUTemp: Optional[int] = None
+        self._prevMode = ThermalMode.Balanced.value
 
         def setFanSpeed(fan: Literal['GPU', 'CPU'], speed: int) -> None:
             res = self._awcc.setFanSpeed(self._awcc.GPUFanIdx if fan == 'GPU' else self._awcc.CPUFanIdx, speed)
@@ -380,8 +403,8 @@ class TCC_GUI(QtWidgets.QWidget):
                     if speed is not None:
                         setFanSpeed(fan, speed)
             else:
-                setFanSpeed('GPU', self._thermalGPU.getSpeedSlider())
-                setFanSpeed('CPU', self._thermalCPU.getSpeedSlider())
+                setFanSpeed('GPU', max(0, self._thermalGPU.getSpeedSlider()))
+                setFanSpeed('CPU', max(0, self._thermalCPU.getSpeedSlider()))
         self._thermalGPU.speedSliderChanged(updateFanSpeed)
         self._thermalCPU.speedSliderChanged(updateFanSpeed)
 
@@ -392,7 +415,26 @@ class TCC_GUI(QtWidgets.QWidget):
             res = self._awcc.setMode(self._awcc.Mode[val])
             print(f'Set mode {val}: ' + ('ok' if res else 'fail'))
             if not res:
-                self._errorExit(f"Failed to set mode {val}", "Program is terminated")
+                # Never exit on mode-switch failure: during fail-safe tripping
+                # this would kill the protection. Revert UI and retry on the
+                # next cycle instead.
+                print(f'Mode switch to {val} failed, reverting UI state')
+                prev = self._prevMode
+                self._modeSwitch.setOnChange(None)
+                self._modeSwitch.setChecked(prev)
+                self._modeSwitch.setOnChange(onModeChange)
+                isCustom = prev == ThermalMode.Custom.value
+                self._thermalGPU.setSpeedDisabled(not isCustom or self._fanCurveAuto)
+                self._thermalCPU.setSpeedDisabled(not isCustom or self._fanCurveAuto)
+                self.toasterMessage(
+                    [
+                        "Mode switch failed",
+                        f"Could not set mode {val}",
+                        "Keeping previous settings, will retry"
+                    ]
+                )
+                return
+            self._prevMode = val
             updateFanSpeed()
             if val != ThermalMode.G_Mode.value:
                 self._failsafeTrippedPrevModeStr = None # In case the mode was switched manually
@@ -542,10 +584,13 @@ class TCC_GUI(QtWidgets.QWidget):
         )
 
     def toasterMessage(self, message: List[str | None], expire = True) -> None:
-        toast = Toast(duration=ToastDuration.Short, expiration_time= (datetime.datetime.now() + datetime.timedelta(seconds=5)) if expire else None)
-        toast.text_fields = message
-        toast.AddImage(ToastDisplayImage.fromPath(resourcePath(GUI_ICON)))
-        self._toaster.show_toast(toast)
+        try:
+            toast = Toast(duration=ToastDuration.Short, expiration_time= (datetime.datetime.now() + datetime.timedelta(seconds=5)) if expire else None)
+            toast.text_fields = message
+            toast.AddImage(ToastDisplayImage.fromPath(resourcePath(GUI_ICON)))
+            self._toaster.show_toast(toast)
+        except Exception as ex:
+            print(f'toasterMessage failed: {ex}')
 
     def _saveAppSettings(self):
         curValues = [
@@ -583,9 +628,21 @@ class TCC_GUI(QtWidgets.QWidget):
         savedSpeed = self.settings.value(SettingsKey.GPUFanSpeed.value)
         self._thermalGPU.setSpeedSlider(savedSpeed)
         savedTemp = self.settings.value(SettingsKey.CPUThresholdTemp.value) or 95
+        try:
+            savedTemp = int(savedTemp)
+            if not (50 <= savedTemp <= 100): raise ValueError()
+        except (ValueError, TypeError):
+            savedTemp = 95
         self._limitTempCPU.setCurrentText(str(savedTemp))
+        self.FAILSAFE_CPU_TEMP = savedTemp
         savedTemp = self.settings.value(SettingsKey.GPUThresholdTemp.value) or 85
+        try:
+            savedTemp = int(savedTemp)
+            if not (50 <= savedTemp <= 90): raise ValueError()
+        except (ValueError, TypeError):
+            savedTemp = 85
         self._limitTempGPU.setCurrentText(str(savedTemp))
+        self.FAILSAFE_GPU_TEMP = savedTemp
         savedFailsafe = self.settings.value(SettingsKey.FailSafeIsOnFlag.value) or 'true'
         self._failsafeCB.setChecked(str(savedFailsafe).lower() == 'true')
         legacyCurve = self.settings.value(SettingsKey.FanCurve.value)
@@ -612,6 +669,9 @@ class TCC_GUI(QtWidgets.QWidget):
         savedCurveGPU = self.settings.value(SettingsKey.FanCurveGPU.value) or legacyCurve
         self._fanCurveGPU = parseCurve(savedCurveGPU)
         self._fanCurveAuto = str(self.settings.value(SettingsKey.FanCurveAuto.value) or 'false').lower() == 'true'
+        if self._fanCurveAuto and self._modeSwitch.getChecked() != ThermalMode.Custom.value:
+            # Only valid in Custom mode; silently reset on load
+            self._fanCurveAuto = False
         self._fanCurveAutoCB.setChecked(self._fanCurveAuto)
 
     def clearAppSettings(self):
