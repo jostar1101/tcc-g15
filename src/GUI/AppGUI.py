@@ -119,7 +119,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.10"
+    APP_VERSION = "1.6.11"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -311,8 +311,8 @@ class TCC_GUI(QtWidgets.QWidget):
                     ]
                 )
                 return
-            self._thermalGPU.setSpeedDisabled(self._fanCurveAuto)
-            self._thermalCPU.setSpeedDisabled(self._fanCurveAuto)
+            self._thermalGPU.setSpeedDisabled(not isCustom or self._fanCurveAuto)
+            self._thermalCPU.setSpeedDisabled(not isCustom or self._fanCurveAuto)
             if self._fanCurveAuto:
                 updateFanSpeed()
         self._fanCurveAutoCB.toggled.connect(onFanCurveAutoToggle)
