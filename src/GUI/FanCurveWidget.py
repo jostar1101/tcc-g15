@@ -52,6 +52,8 @@ class FanCurveWidget(QtWidgets.QWidget):
             x0, y0 = pts[i]
             x1, y1 = pts[i + 1]
             if temp <= x1:
+                if x1 == x0:
+                    return y1
                 return y0 + (temp - x0) * (y1 - y0) / (x1 - x0)
         return pts[-1][1]
 
