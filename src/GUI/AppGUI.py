@@ -119,7 +119,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.8"
+    APP_VERSION = "1.6.9"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -298,6 +298,9 @@ class TCC_GUI(QtWidgets.QWidget):
         self._fanCurveAutoCB.setToolTip("In Custom mode, control fan speed automatically by the temperature curves")
         def onFanCurveAutoToggle():
             self._fanCurveAuto = self._fanCurveAutoCB.isChecked()
+            if self._fanCurveAuto and self._modeSwitch.getChecked() != ThermalMode.Custom.value:
+                self._modeSwitch.setChecked(ThermalMode.Custom.value)
+                self._toasterMessageCurrentMode()
             self._thermalGPU.setSpeedDisabled(self._fanCurveAuto)
             self._thermalCPU.setSpeedDisabled(self._fanCurveAuto)
             if self._fanCurveAuto:
@@ -348,10 +351,10 @@ class TCC_GUI(QtWidgets.QWidget):
             res = self._awcc.setFanSpeed(self._awcc.GPUFanIdx if fan == 'GPU' else self._awcc.CPUFanIdx, speed)
             print(f'Set {fan} fan speed to {speed}: ' + ('ok' if res else 'fail'))
 
-        def getCurveSpeed(fan: Literal['GPU', 'CPU']) -> int:
+        def getCurveSpeed(fan: Literal['GPU', 'CPU']) -> Optional[int]:
             temp = self._lastGPUTemp if fan == 'GPU' else self._lastCPUTemp
             if temp is None:
-                return 0
+                return None
             curve = self._fanCurveGPU if fan == 'GPU' else self._fanCurveCPU
             return int(round(curveLookup(curve, temp)))
 
@@ -359,8 +362,10 @@ class TCC_GUI(QtWidgets.QWidget):
             if self._modeSwitch.getChecked() != ThermalMode.Custom.value:
                 return
             if self._fanCurveAuto:
-                setFanSpeed('GPU', getCurveSpeed('GPU'))
-                setFanSpeed('CPU', getCurveSpeed('CPU'))
+                for fan in ('GPU', 'CPU'):
+                    speed = getCurveSpeed(fan)
+                    if speed is not None:
+                        setFanSpeed(fan, speed)
             else:
                 setFanSpeed('GPU', self._thermalGPU.getSpeedSlider())
                 setFanSpeed('CPU', self._thermalCPU.getSpeedSlider())
