@@ -109,6 +109,8 @@ def curveLookup(curve: List[List[float]], temp: float) -> float:
         x0, y0 = curve[i]
         x1, y1 = curve[i + 1]
         if temp <= x1:
+            if x1 == x0:
+                return y1
             return y0 + (temp - x0) * (y1 - y0) / (x1 - x0)
     return curve[-1][1]
 
@@ -119,7 +121,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.11"
+    APP_VERSION = "1.6.12"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -366,7 +368,8 @@ class TCC_GUI(QtWidgets.QWidget):
             if temp is None:
                 return None
             curve = self._fanCurveGPU if fan == 'GPU' else self._fanCurveCPU
-            return int(round(curveLookup(curve, temp)))
+            speed = int(round(curveLookup(curve, temp)))
+            return max(0, min(100, speed))
 
         def updateFanSpeed():
             if self._modeSwitch.getChecked() != ThermalMode.Custom.value:
@@ -403,10 +406,14 @@ class TCC_GUI(QtWidgets.QWidget):
 
         def updateAppState():
             # Get temps and RPMs
-            gpuTemp = self._awcc.getGPUTemp()
-            gpuRPM = self._awcc.getFanRPM(self._awcc.GPUFanIdx)
-            cpuTemp = self._awcc.getFanRelatedTemp(self._awcc.CPUFanIdx)
-            cpuRPM = self._awcc.getFanRPM(self._awcc.CPUFanIdx)
+            try:
+                gpuTemp = self._awcc.getGPUTemp()
+                gpuRPM = self._awcc.getFanRPM(self._awcc.GPUFanIdx)
+                cpuTemp = self._awcc.getFanRelatedTemp(self._awcc.CPUFanIdx)
+                cpuRPM = self._awcc.getFanRPM(self._awcc.CPUFanIdx)
+            except Exception as ex:
+                print(f'updateAppState: temp read failed: {ex}')
+                gpuTemp = gpuRPM = cpuTemp = cpuRPM = None
             # Update UI gauges
             if gpuTemp is not None: self._thermalGPU.setTemp(gpuTemp)
             if gpuRPM is not None: self._thermalGPU.setFanRPM(gpuRPM)
@@ -510,7 +517,7 @@ class TCC_GUI(QtWidgets.QWidget):
         if self.gModeHotKey is not None:
             self.gModeHotKey.stop()
             self.gModeHotKey.wait()
-        if self.gModeHotKey is not None:
+        if self._updateGaugesTask is not None:
             self._updateGaugesTask.stop()
         print('Cleanup: done')
 
@@ -588,7 +595,15 @@ class TCC_GUI(QtWidgets.QWidget):
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, list) and len(parsed) >= 2:
-                    return [[float(x), float(y)] for x, y in parsed]
+                    pts = []
+                    for x, y in parsed:
+                        x = float(x)
+                        y = float(y)
+                        x = max(FanCurveWidget.TEMP_MIN, min(FanCurveWidget.TEMP_MAX, x))
+                        y = max(FanCurveWidget.RPM_MIN, min(FanCurveWidget.RPM_MAX, y))
+                        pts.append([x, y])
+                    pts.sort(key=lambda p: p[0])
+                    return pts
             except (ValueError, TypeError):
                 pass
             return [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
