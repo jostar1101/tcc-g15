@@ -88,6 +88,8 @@ class SettingsKey(Enum):
     FailSafeIsOnFlag = "app/failsafe_is_on_flag"
     MinimizeOnCloseFlag = "app/minimize_on_close_flag"
     FanCurve = "app/fan/curve"
+    FanCurveCPU = "app/fan/curve_cpu"
+    FanCurveGPU = "app/fan/curve_gpu"
     FanCurveAuto = "app/fan/curve_auto"
 
 def errorExit(message: str, message2: Optional[str] = None) -> None:
@@ -117,7 +119,7 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
     APP_NAME = "Thermal Control Center for Dell G15"
-    APP_VERSION = "1.6.7"
+    APP_VERSION = "1.6.8"
     APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
@@ -288,11 +290,12 @@ class TCC_GUI(QtWidgets.QWidget):
         failsafeBox.addWidget(failsafeIndicator)
 
         # Fan curve controls
-        self._fanCurve = [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
+        self._fanCurveCPU = [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
+        self._fanCurveGPU = [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
         self._fanCurveAuto = False
         curveBox = QtWidgets.QHBoxLayout()
         self._fanCurveAutoCB = QtWidgets.QCheckBox("Auto fan curve")
-        self._fanCurveAutoCB.setToolTip("In Custom mode, control fan speed automatically by the temperature curve")
+        self._fanCurveAutoCB.setToolTip("In Custom mode, control fan speed automatically by the temperature curves")
         def onFanCurveAutoToggle():
             self._fanCurveAuto = self._fanCurveAutoCB.isChecked()
             self._thermalGPU.setSpeedDisabled(self._fanCurveAuto)
@@ -300,18 +303,27 @@ class TCC_GUI(QtWidgets.QWidget):
             if self._fanCurveAuto:
                 updateFanSpeed()
         self._fanCurveAutoCB.toggled.connect(onFanCurveAutoToggle)
-        curveEditBtn = QtWidgets.QPushButton("Edit curve...")
-        curveEditBtn.setToolTip("Open the temperature-to-fan-speed curve editor")
-        def onEditCurve():
-            dlg = FanCurveDialog(self, self._fanCurve)
-            if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-                self._fanCurve = dlg.getCurve()
-                if self._fanCurveAuto:
-                    updateFanSpeed()
-                self._saveAppSettings()
-        curveEditBtn.clicked.connect(onEditCurve)
+        def makeCurveEditBtn(label: str, which: Literal['CPU', 'GPU']):
+            btn = QtWidgets.QPushButton(label)
+            btn.setToolTip(f"Open the {which} temperature-to-fan-speed curve editor")
+            def onEditCurve():
+                curve = self._fanCurveCPU if which == 'CPU' else self._fanCurveGPU
+                dlg = FanCurveDialog(self, curve)
+                if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+                    if which == 'CPU':
+                        self._fanCurveCPU = dlg.getCurve()
+                    else:
+                        self._fanCurveGPU = dlg.getCurve()
+                    if self._fanCurveAuto:
+                        updateFanSpeed()
+                    self._saveAppSettings()
+            btn.clicked.connect(onEditCurve)
+            return btn
+        curveEditBtnCPU = makeCurveEditBtn("CPU curve...", 'CPU')
+        curveEditBtnGPU = makeCurveEditBtn("GPU curve...", 'GPU')
         curveBox.addWidget(self._fanCurveAutoCB)
-        curveBox.addWidget(curveEditBtn)
+        curveBox.addWidget(curveEditBtnCPU)
+        curveBox.addWidget(curveEditBtnGPU)
         curveBox.addStretch(1)
 
         modeBox = QtWidgets.QHBoxLayout()
@@ -336,18 +348,19 @@ class TCC_GUI(QtWidgets.QWidget):
             res = self._awcc.setFanSpeed(self._awcc.GPUFanIdx if fan == 'GPU' else self._awcc.CPUFanIdx, speed)
             print(f'Set {fan} fan speed to {speed}: ' + ('ok' if res else 'fail'))
 
-        def getCurveSpeed() -> int:
-            temps = [t for t in (self._lastGPUTemp, self._lastCPUTemp) if t is not None]
-            temp = max(temps) if temps else 0
-            return int(round(curveLookup(self._fanCurve, temp)))
+        def getCurveSpeed(fan: Literal['GPU', 'CPU']) -> int:
+            temp = self._lastGPUTemp if fan == 'GPU' else self._lastCPUTemp
+            if temp is None:
+                return 0
+            curve = self._fanCurveGPU if fan == 'GPU' else self._fanCurveCPU
+            return int(round(curveLookup(curve, temp)))
 
         def updateFanSpeed():
             if self._modeSwitch.getChecked() != ThermalMode.Custom.value:
                 return
             if self._fanCurveAuto:
-                speed = getCurveSpeed()
-                setFanSpeed('GPU', speed)
-                setFanSpeed('CPU', speed)
+                setFanSpeed('GPU', getCurveSpeed('GPU'))
+                setFanSpeed('CPU', getCurveSpeed('CPU'))
             else:
                 setFanSpeed('GPU', self._thermalGPU.getSpeedSlider())
                 setFanSpeed('CPU', self._thermalCPU.getSpeedSlider())
@@ -520,7 +533,8 @@ class TCC_GUI(QtWidgets.QWidget):
             self.FAILSAFE_CPU_TEMP,
             self.FAILSAFE_GPU_TEMP,
             self._failsafeOn,
-            json.dumps(self._fanCurve),
+            json.dumps(self._fanCurveCPU),
+            json.dumps(self._fanCurveGPU),
             self._fanCurveAuto
         ]
         if curValues == self._prevSavedSettingsValues:
@@ -533,7 +547,8 @@ class TCC_GUI(QtWidgets.QWidget):
         self.settings.setValue(SettingsKey.CPUThresholdTemp.value, self.FAILSAFE_CPU_TEMP)
         self.settings.setValue(SettingsKey.GPUThresholdTemp.value, self.FAILSAFE_GPU_TEMP)
         self.settings.setValue(SettingsKey.FailSafeIsOnFlag.value, self._failsafeOn)
-        self.settings.setValue(SettingsKey.FanCurve.value, json.dumps(self._fanCurve))
+        self.settings.setValue(SettingsKey.FanCurveCPU.value, json.dumps(self._fanCurveCPU))
+        self.settings.setValue(SettingsKey.FanCurveGPU.value, json.dumps(self._fanCurveGPU))
         self.settings.setValue(SettingsKey.FanCurveAuto.value, self._fanCurveAuto)
 
     def _loadAppSettings(self):
@@ -551,14 +566,21 @@ class TCC_GUI(QtWidgets.QWidget):
         self._limitTempGPU.setCurrentText(str(savedTemp))
         savedFailsafe = self.settings.value(SettingsKey.FailSafeIsOnFlag.value) or 'true'
         self._failsafeCB.setChecked(str(savedFailsafe).lower() == 'true')
-        savedCurve = self.settings.value(SettingsKey.FanCurve.value)
-        if savedCurve:
+        legacyCurve = self.settings.value(SettingsKey.FanCurve.value)
+        def parseCurve(raw):
+            if not raw:
+                return [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
             try:
-                parsed = json.loads(savedCurve)
+                parsed = json.loads(raw)
                 if isinstance(parsed, list) and len(parsed) >= 2:
-                    self._fanCurve = [[float(x), float(y)] for x, y in parsed]
+                    return [[float(x), float(y)] for x, y in parsed]
             except (ValueError, TypeError):
                 pass
+            return [list(p) for p in FanCurveWidget.DEFAULT_CURVE]
+        savedCurveCPU = self.settings.value(SettingsKey.FanCurveCPU.value) or legacyCurve
+        self._fanCurveCPU = parseCurve(savedCurveCPU)
+        savedCurveGPU = self.settings.value(SettingsKey.FanCurveGPU.value) or legacyCurve
+        self._fanCurveGPU = parseCurve(savedCurveGPU)
         self._fanCurveAuto = str(self.settings.value(SettingsKey.FanCurveAuto.value) or 'false').lower() == 'true'
         self._fanCurveAutoCB.setChecked(self._fanCurveAuto)
 
