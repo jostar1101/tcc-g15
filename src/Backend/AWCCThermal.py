@@ -1,6 +1,8 @@
 from typing import Optional, NewType
 from Backend.AWCCWmiWrapper import AWCCWmiWrapper
 from wmi import WMI # type: ignore
+import ctypes
+import time
 
 class NoAWCCWMIClass(Exception):
     def __init__(self) -> None:
@@ -51,6 +53,34 @@ class AWCCThermal:
         if fanIdx >= len(self._fanIdsAndRelatedSensorsIds):
             return None
         return self._awcc.GetSensorTemperature(self._fanIdsAndRelatedSensorsIds[fanIdx][1][0])
+
+    def getGPUTemp(self) -> Optional[int]:
+        # GPU core temperature via NVML (same source as Task Manager).
+        # The AWCC driver often reports bogus GPU temp on Dell G15.
+        # Using ctypes against nvml.dll avoids spawning a subprocess every
+        # second (which kept the CPU at full frequency on idle).
+        if not hasattr(self, "_nvml"):
+            self._nvml = None
+            try:
+                nvml = ctypes.WinDLL("nvml.dll")
+                if nvml.nvmlInit() == 0:
+                    nvml.nvmlDeviceGetHandleByIndex.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)]
+                    nvml.nvmlDeviceGetHandleByIndex.restype = ctypes.c_int
+                    nvml.nvmlDeviceGetTemperature.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+                    nvml.nvmlDeviceGetTemperature.restype = ctypes.c_int
+                    self._nvml = nvml
+            except Exception:
+                self._nvml = None
+        if self._nvml is not None:
+            try:
+                handle = ctypes.c_void_p()
+                if self._nvml.nvmlDeviceGetHandleByIndex(0, ctypes.byref(handle)) == 0:
+                    temp = ctypes.c_uint()
+                    if self._nvml.nvmlDeviceGetTemperature(handle, 0, ctypes.byref(temp)) == 0:
+                        return int(temp.value)
+            except Exception:
+                pass
+        return self.getFanRelatedTemp(self.GPUFanIdx)
 
     def getFanRPM(self, fanIdx: int) -> Optional[int]:
         if fanIdx >= len(self._fanIdsAndRelatedSensorsIds):

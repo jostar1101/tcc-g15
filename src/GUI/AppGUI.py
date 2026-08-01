@@ -317,7 +317,7 @@ class TCC_GUI(QtWidgets.QWidget):
 
         def updateAppState():
             # Get temps and RPMs
-            gpuTemp = self._awcc.getFanRelatedTemp(self._awcc.GPUFanIdx)
+            gpuTemp = self._awcc.getGPUTemp()
             gpuRPM = self._awcc.getFanRPM(self._awcc.GPUFanIdx)
             cpuTemp = self._awcc.getFanRelatedTemp(self._awcc.CPUFanIdx)
             cpuRPM = self._awcc.getFanRPM(self._awcc.CPUFanIdx)
