@@ -82,6 +82,7 @@ class AWCCWmiWrapper:
 
     def SetAddonSpeedPercent(self, fanId: int, speed: int) -> bool:
         if not (fanId in range(self.FAN_ID_FIRST, self.FAN_ID_LAST + 1)): return False
+        if speed < 0: speed = 0
         if speed > 0xFF: speed = 0xFF
         arg = ((speed & 0xFF) << 16) | ((fanId & 0xFF) << 8) | 2
         return self._call('Thermal_Control', arg) == 0
