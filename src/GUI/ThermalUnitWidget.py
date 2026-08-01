@@ -83,6 +83,10 @@ class ThermalUnitWidget(QtWidgets.QWidget):
 
     def setSpeedSlider(self, value: Optional[int] = None) -> None:
         if value is None: value = (self._speedSlider.minimum() + self._speedSlider.maximum()) // 2
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            value = (self._speedSlider.minimum() + self._speedSlider.maximum()) // 2
         if value < self._speedSlider.minimum(): value = self._speedSlider.minimum()
         if value > self._speedSlider.maximum(): value = self._speedSlider.maximum()
         self._speedSlider.setValue(value)
