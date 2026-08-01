@@ -94,7 +94,13 @@ class AWCCWmiWrapper:
     def _call(self, method: str, arg: int) -> Optional[int]:
         if not hasattr(self._awcc, method) or not callable(getattr(self._awcc, method)):
             return None
-        val: int = getattr(self._awcc, method)(arg)[0]
+        try:
+            ret = getattr(self._awcc, method)(arg)
+            if not ret:
+                return None
+            val: int = ret[0]
+        except Exception:
+            return None
         if not isinstance(val, int) or val == -1 or val == 0xFFFFFFFF: 
             return None
         return val
